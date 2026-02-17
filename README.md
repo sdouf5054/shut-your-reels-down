@@ -1,135 +1,90 @@
-# shut your reels down — LLM Answer Notifier
+# Shut Your Scroll Down — LLM Answer Notifier
 *Stop doomscrolling. Start working.*
 
+A lightweight browser extension that **plays a sound when an LLM finishes generating a response**—so you can stop watching the spinner and get back to work.
+
 <p align="center">
-<img src="https://github.com/user-attachments/assets/72616a09-90e0-4a7f-817c-628058fe5679" width="260" height="598" alt="이미지1">
-<img src="https://github.com/user-attachments/assets/36312bf3-e985-4b7b-ad69-0aa525383a52" width="246" height="500" alt="이미지2">
+  <img src="https://github.com/user-attachments/assets/72616a09-90e0-4a7f-817c-628058fe5679" width="260" height="598" alt="Screenshot 1">
+  <img src="https://github.com/user-attachments/assets/36312bf3-e985-4b7b-ad69-0aa525383a52" width="246" height="500" alt="Screenshot 2">
 </p>
 
+## Supported Platforms
+
+**ChatGPT**  
+DOM detection works even in background tabs
+
+**Claude, Gemini, Perplexity**  
+Uses network detection when backgrounded
+
+> This extension uses a **hybrid strategy (DOM + network)** because some sites stop rendering / throttle timers in hidden tabs.
 
 
+## Key Features
 
-## 목적
+- **Sound notification on completion** (per tab, per platform)
+- **Multi-platform support**: ChatGPT, Claude, Gemini, Perplexity
+- **Multi-tab aware**: detects multiple completions independently
+- **Duplicate prevention**: cooldown + suppression window to avoid double pings
+- **Options page**:
+  - Volume control
+  - Per-platform sound selection (or disable)
 
-여러 LLM에 질문을 던지고 다른 작업을 하다가, 답변이 완료되면 **사이트별로 다른 알림음**으로 어떤 모델이 끝났는지 바로 알 수 있게 하는 것.
 
-## 지원 플랫폼
+## Installation (Developer Mode)
 
-| 사이트 | DOM 감지 | 네트워크 감지 | Heartbeat | 비고 |
-|---|---|---|---|---|
-| ChatGPT | ✅ | ✅ `/backend-api/f/conversation` | — | Hidden 탭에서도 DOM 동작 |
-| Claude | ✅ | ✅ `/api/*/completion` | ✅ | Hidden 탭에서 DOM 멈춤 |
-| Gemini | ✅ | ✅ `StreamGenerate*` | ✅ | 페이지 로드 grace 5초 |
-| Perplexity | ✅ | ✅ `/rest/sse/perplexity_ask*` | ✅ | 페이지 로드 grace 5초 |
+### Chrome / Whale (Chromium-based)
+1. Download or clone this repo.
+2. Open your browser and go to:
+   - Chrome: `chrome://extensions`
+   - Whale: `whale://extensions`
+3. Enable **Developer mode**.
+4. Click **Load unpacked** and select the project folder (the one containing `manifest.json`).
+5. Open the extension **Options** page and press **Test sound**.
 
-## 아키텍처
+## Usage
+1. Go to one of the supported platforms.
+2. Send a prompt.
+3. When the response finishes generating, you’ll hear a sound.
 
-```
-┌─ Content Script (탭마다 독립) ─────────────────────┐
-│  detector (사이트별)  →  engine.js (상태머신)       │
-│  isGenerating() / getLastResponseText()             │
-│                                                     │
-│  상태 흐름:                                          │
-│  IDLE → GENERATING → SETTLING → DONE → IDLE         │
-│              ↑ flickering ↓                          │
-│           GENERATING ← SETTLING                      │
-└──────────────────────────────────────────────────────┘
-        ↕ 메시지                    ↕ 메시지
-┌─ Background (Service Worker) ────────────────────────┐
-│  네트워크 감지 (webRequest)                           │
-│  Heartbeat/Pacemaker (hidden 탭 대응)                │
-│  탭별 쿨다운 (중복 알림 방지)                         │
-│  사이트별 알림음 선택 → Offscreen 소리 재생           │
-└──────────────────────────────────────────────────────┘
-        ↕ 메시지
-┌─ Offscreen Document ─────────────────────────────────┐
-│  Audio 재생 전용 (Service Worker에서 직접 불가)       │
-└──────────────────────────────────────────────────────┘
-```
+## Discord Push Notifications (Optional)
 
-### 감지 전략: DOM + 네트워크 이중 감지
+This is the simplest way to get **iPhone push** without running your own server.
+The extension sends a message to a Discord channel via **Webhook**, and Discord delivers the push notification.
 
-- **DOM 감지**: Content Script가 Stop 버튼, streaming 클래스 등을 MutationObserver + polling으로 감시
-- **네트워크 감지**: Background가 webRequest API로 스트리밍 HTTP 요청 완료를 감지
-- **왜 둘 다?**: Chrome은 hidden 탭에서 setTimeout/setInterval을 throttle함. Claude, Gemini 등은 탭을 떠나면 DOM이 얼어붙어 Content Script만으로는 감지 불가. 네트워크 감지가 이를 보완.
+### Step 1 — Create a Discord Webhook
+1. Create a **private Discord server** (or use an existing one).
+2. Create a channel, e.g. `#ai-notify`.
+3. Channel settings → **Integrations** → **Webhooks** → **New Webhook**.
+4. Copy the **Webhook URL**.
 
-### 중복 알림 방지
+### Step 2 — Connect in Extension Options
+1. Open the extension **Options** page.
+2. Paste the Webhook URL.
+3. Click **Send test notification**.
+4. Enable Discord notifications (global and/or per-platform).
 
-1. **탭별 쿨다운** (`tabCooldown`): 같은 탭에서 5초 내 중복 재생 방지
-2. **NETWORK_DONE 메시지**: 네트워크가 먼저 알림을 울리면 Content Script에 알려 상태 리셋
-3. **네트워크 억제 기간** (`NET_SUPPRESS_MS`): 네트워크 알림 후 10초간 Content Script의 모든 감지 억제 → 탭 복귀 시 DOM flickering에 의한 재감지 방지
+### Notes
+- Make sure the Discord channel/server is **not muted** and notifications are set to **All Messages**.
+- On iPhone: Settings → Notifications → Discord → Allow Notifications.
 
-### 멀티탭 동시 지원
 
-- 모든 추적이 `tabId` 또는 `requestId` 기반으로 독립
-- 여러 LLM에 동시 질문 시 각각 별도로 감지 → 각각 알림
+## Privacy
+- The extension runs locally in your browser.
+- If Discord integration is enabled, it sends **minimal metadata** by default (e.g., platform name, tab title, timestamp).
 
-## 파일 구조
+## Troubleshooting
+- **No sound?**
+  - Check volume in Options.
+  - Click **Test sound** in Options.
+  - Some OS/browsers may block audio until you interact once—try clicking on the page and testing again.
+- **Discord push not arriving?**
+  - Verify webhook URL using **Send test notification**.
+  - Ensure the channel/server isn’t muted and notifications are set to All Messages.
+  - Check iPhone Focus / Do Not Disturb settings.
+- **Duplicate sounds?**
+  - This can happen when a platform triggers both DOM and network signals; the extension includes cooldown/suppression, but selectors may need updates after platform UI changes.
 
-```
-ai-answer-notifier/
-├── manifest.json
-├── assets/
-│   ├── icons/          # 확장 아이콘 (16/48/128px)
-│   └── sounds/         # 알림음 파일 (wav, mp3)
-│       └── default.wav
-└── src/
-    ├── background.js   # Service Worker (네트워크 감지, heartbeat, 소리 재생)
-    ├── offscreen.html  # Offscreen Document (오디오 재생용)
-    ├── offscreen.js
-    ├── options.html    # 설정 페이지 UI
-    ├── options.js      # 설정 로직 (볼륨, 사이트별 알림음)
-    └── content/
-        ├── engine.js   # 공통 상태머신 엔진
-        └── detectors/  # 사이트별 감지 로직
-            ├── chatgpt.js
-            ├── claude.js
-            ├── gemini.js
-            └── perplexity.js
-```
 
-## 옵션 설정
+## License
+MIT (or choose one)
 
-- **볼륨**: 0~100% 슬라이더
-- **사이트별 알림음**: 각 사이트마다 다른 소리 선택 가능, "없음"으로 특정 사이트 알림 끄기
-- **항상 알림**: 탭을 보고 있을 때도 알림 (기본 ON, 해제 시 다른 탭에 있을 때만)
-
-### 알림음 추가 방법
-
-1. `assets/sounds/`에 wav 또는 mp3 파일 넣기
-2. `src/options.js`의 `SOUND_FILES` 배열에 파일명 추가
-3. 확장 새로고침 → 옵션에서 선택 가능
-
-## 해결한 주요 이슈
-
-| 이슈 | 원인 | 해결 |
-|---|---|---|
-| Hidden 탭에서 감지 안 됨 | Chrome이 setTimeout throttle | 네트워크 감지 + Heartbeat(Pacemaker) |
-| 알림 2번 울림 | 네트워크 + DOM 감지 양쪽에서 동시 트리거 | NETWORK_DONE 메시지 + 10초 억제 기간 |
-| 페이지 로드 시 오감지 (Gemini) | 이전 답변 DOM + progress bar 잔존 | Init grace period 5초 |
-| Gemini URL 패턴 불일치 | 멀티 계정 `/u/0/` 경로 | 추가 URL 패턴 등록 |
-| 탭 복귀 시 재감지 | DOM이 깨어나며 isGenerating() flickering | NET_SUPPRESS_MS 10초 보호 |
-
-## 앞으로 할 것
-
-### 실사용 테스트 & 튜닝
-- [ ] 사이트별 알림음 wav/mp3 파일 세팅
-- [ ] 장시간 사용 시 안정성 확인 (메모리 누수, Service Worker 재시작 등)
-- [ ] 새로운 LLM 사이트 추가 가능성 (Grok, DeepSeek 등)
-
-### Discord Webhook 연동 (Step 6)
-- [ ] 답변 완료 시 Discord 채널에 메시지 전송
-- [ ] 전송 내용: 사이트명, 답변 미리보기(첫 N자), 타임스탬프
-- [ ] 옵션 페이지에서 Webhook URL 설정
-- [ ] 사이트별 ON/OFF
-
-### 추가 개선 아이디어
-- [ ] 답변 완료 시 브라우저 Notification API 알림 (소리 외 시각적 알림)
-- [ ] 확장 아이콘 뱃지로 완료된 탭 수 표시
-- [ ] 알림 히스토리 (최근 N개 답변 완료 로그)
-
-## 버전 히스토리
-
-- **v0.3.0** — 디스코드 연동 알림(Discord webhook 이용, preview 등)
-- **v0.2.0** — 4개 플랫폼 지원, 사이트별 알림음, DOM+네트워크 이중 감지, 중복 알림 방지
-- **v0.1.0** — ChatGPT DOM 감지 + 소리 재생 초기 버전
