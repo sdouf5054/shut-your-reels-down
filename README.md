@@ -1,7 +1,7 @@
 # shut your reels down — LLM Answer Notifier
 *Stop doomscrolling. Start working.*
 
-<img width="260" height="598" alt="image" src="https://github.com/user-attachments/assets/72104f4e-2e5e-4146-a120-c6ed7ae8adee" />
+<img width="260" height="598" alt="image" src="https://github.com/user-attachments/assets/72616a09-90e0-4a7f-817c-628058fe5679" />
 
 
 ## 목적
