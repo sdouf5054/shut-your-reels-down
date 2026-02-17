@@ -1,4 +1,4 @@
-# Shut Your Scroll Down — LLM Answer Notifier
+# shut your reels down — LLM Answer Notifier
 *Stop doomscrolling. Start working.*
 
 A lightweight browser extension that **plays a sound when an LLM finishes generating a response**—so you can stop watching the spinner and get back to work.
