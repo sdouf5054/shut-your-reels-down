@@ -17,32 +17,56 @@ const DEFAULT_SOUNDS = {
 // ─── 소리 재생 (Offscreen Document) ───────────────────────────
 
 const OFFSCREEN_PATH = 'src/offscreen.html';
+let offscreenInitPromise = null;
 
 async function ensureOffscreen() {
+  if (offscreenInitPromise) {
+    await offscreenInitPromise;
+    return;
+  }
+
   const exists = await chrome.runtime.getContexts({
     contextTypes: ['OFFSCREEN_DOCUMENT'],
     documentUrls: [chrome.runtime.getURL(OFFSCREEN_PATH)]
   });
   if (exists.length > 0) return;
 
-  await chrome.offscreen.createDocument({
+  offscreenInitPromise = chrome.offscreen.createDocument({
     url: OFFSCREEN_PATH,
     reasons: ['AUDIO_PLAYBACK'],
     justification: 'Play notification sound on LLM response completion'
+  }).catch((err) => {
+    // 동시 호출 경쟁으로 이미 생성된 경우는 무해
+    if (!err?.message?.includes('Only a single offscreen document may be created')) {
+      throw err;
+    }
+  }).finally(() => {
+    offscreenInitPromise = null;
   });
+
+  await offscreenInitPromise;
+}
+
+function normalizeSite(site) {
+  if (!site) return site;
+  if (site === 'www.perplexity.ai') return 'perplexity.ai';
+  if (site === 'chat.openai.com') return 'chatgpt.com';
+  return site;
 }
 
 async function playSound(site) {
+  const normalizedSite = normalizeSite(site);
+
   const { volume, sounds } = await chrome.storage.sync.get({
     volume: 0.7,
     sounds: DEFAULT_SOUNDS
   });
 
-  const soundFile = sounds[site] || 'default.wav';
+  const soundFile = sounds[normalizedSite] || 'default.wav';
 
   // "none" → 이 사이트는 알림 꺼짐
   if (soundFile === 'none') {
-    console.log(P, `Sound disabled for ${site}`);
+    console.log(P, `Sound disabled for ${normalizedSite}`);
     return;
   }
 
@@ -119,6 +143,8 @@ function saveDiscordError(msg) {
 }
 
 async function sendDiscord(site, tabTitle, timestamp, preview) {
+  const normalizedSite = normalizeSite(site);
+
   const settings = await chrome.storage.sync.get({
     discordWebhookUrl: '',
     discordEnabled: false,
@@ -131,12 +157,12 @@ async function sendDiscord(site, tabTitle, timestamp, preview) {
   if (!settings.discordWebhookUrl.startsWith('https://discord.com/api/webhooks/')) return;
 
   // 사이트별 ON/OFF
-  if (settings.discordSites[site] === false) {
-    console.log(P, `Discord: disabled for ${site}`);
+  if (settings.discordSites[normalizedSite] === false) {
+    console.log(P, `Discord: disabled for ${normalizedSite}`);
     return;
   }
 
-  const siteLabel = SITE_LABELS[site] || site;
+  const siteLabel = SITE_LABELS[normalizedSite] || normalizedSite;
   const time = new Date(timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
 
   let content = `✅ **${siteLabel}** 답변 완료 — ${tabTitle} (${time})`;
@@ -239,6 +265,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     }
 
     case 'ANSWER_DONE':
+      msg.site = normalizeSite(msg.site);
       console.log(P, 'Answer done:', msg.site, `(tab ${tabId})`);
       if (tabId && !canNotify(tabId)) {
         console.log(P, 'Skipped — tab cooldown active');
