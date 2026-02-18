@@ -5,6 +5,24 @@
 
 const P = '[AI-Notifier BG]';
 
+let debugLogs = false;
+
+function logDebug(...args) {
+  if (!debugLogs) return;
+  console.log(P, '[debug]', ...args);
+}
+
+chrome.storage.sync.get({ debugLogs: false }, ({ debugLogs: enabled }) => {
+  debugLogs = Boolean(enabled);
+  console.log(P, `Debug logs ${debugLogs ? 'enabled' : 'disabled'}`);
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'sync' || !changes.debugLogs) return;
+  debugLogs = Boolean(changes.debugLogs.newValue);
+  console.log(P, `Debug logs ${debugLogs ? 'enabled' : 'disabled'}`);
+});
+
 // ─── 사이트별 기본 알림음 ────────────────────────────────────
 
 const DEFAULT_SOUNDS = {
@@ -97,6 +115,8 @@ async function processDiscordQueue() {
   discordBusy = true;
 
   const job = discordQueue.shift();
+  const queuedMs = Date.now() - (job.queuedAt || Date.now());
+  logDebug(`Discord: dequeued ${job.siteLabel} (wait ${queuedMs}ms, remaining ${discordQueue.length})`);
 
   try {
     const res = await fetch(job.url, {
@@ -108,7 +128,8 @@ async function processDiscordQueue() {
     if (res.status === 429) {
       const data = await res.json().catch(() => ({}));
       const waitMs = Math.ceil((data.retry_after || 2) * 1000);
-      console.log(P, `Discord: rate limited, waiting ${waitMs}ms (queue: ${discordQueue.length + 1})`);
+      job.retries = (job.retries || 0) + 1;
+      console.log(P, `Discord: rate limited, waiting ${waitMs}ms (queue: ${discordQueue.length + 1}, retries: ${job.retries}, site: ${job.siteLabel})`);
       discordQueue.unshift(job); // 다시 맨 앞에
       discordBusy = false;
       setTimeout(processDiscordQueue, waitMs);
@@ -121,14 +142,17 @@ async function processDiscordQueue() {
       saveDiscordError(errMsg);
     } else {
       console.log(P, `Discord: sent (${job.siteLabel})`);
+      logDebug(`Discord: delivered ${job.siteLabel} (retries: ${job.retries || 0})`);
     }
   } catch (err) {
     console.log(P, 'Discord: fetch error', err.message);
+    logDebug(`Discord: fetch error detail (site: ${job.siteLabel}, retries: ${job.retries || 0})`);
     saveDiscordError(err.message);
   }
 
   discordBusy = false;
   if (discordQueue.length > 0) {
+    logDebug(`Discord: scheduling next job (queue: ${discordQueue.length})`);
     setTimeout(processDiscordQueue, 500); // 최소 0.5초 간격
   }
 }
@@ -180,9 +204,12 @@ async function sendDiscord(site, tabTitle, timestamp, preview) {
   discordQueue.push({
     url: settings.discordWebhookUrl,
     siteLabel,
+    queuedAt: Date.now(),
+    retries: 0,
     payload: { username: 'shut your reels down', content }
   });
 
+  logDebug(`Discord: enqueued ${siteLabel} (queue: ${discordQueue.length})`);
   processDiscordQueue();
 }
 
