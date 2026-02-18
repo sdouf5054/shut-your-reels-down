@@ -56,6 +56,7 @@ The extension sends a message to a Discord channel via **Webhook**, and Discord 
 2. Create a channel, e.g. `#ai-notify`.
 3. Channel settings → **Integrations** → **Webhooks** → **New Webhook**.
 4. Copy the **Webhook URL**.
+<img width="600" height="600" alt="image" src="https://github.com/user-attachments/assets/b8ba4d94-bf96-4153-bd3d-e251da8786f3" />
 
 ### Step 2 — Connect in Extension Options
 1. Open the extension **Options** page.
