@@ -11,6 +11,7 @@
     "https://claude.ai/*",
     "https://gemini.google.com/*",
     "https://www.perplexity.ai/*",
+    "https://perplexity.ai/*",
     "https://discord.com/api/webhooks/*"
   ],
 

@@ -290,10 +290,14 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 
 const STREAM_URL_PATTERNS = [
   'https://chatgpt.com/backend-api/f/conversation',
+  'https://chatgpt.com/backend-api/*/conversation',
+  'https://chat.openai.com/backend-api/f/conversation',
+  'https://chat.openai.com/backend-api/*/conversation',
   'https://claude.ai/api/*/completion',
   'https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate*',
   'https://gemini.google.com/u/*/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate*',
-  'https://www.perplexity.ai/rest/sse/perplexity_ask*'
+  'https://www.perplexity.ai/rest/sse/perplexity_ask*',
+  'https://perplexity.ai/rest/sse/perplexity_ask*'
 ];
 
 const MIN_STREAM_DURATION_MS = 1000;
@@ -301,6 +305,7 @@ const pendingStreams = new Map();
 
 function siteFromUrl(url) {
   if (url.includes('chatgpt.com'))        return 'chatgpt.com';
+  if (url.includes('chat.openai.com'))    return 'chat.openai.com';
   if (url.includes('claude.ai'))          return 'claude.ai';
   if (url.includes('gemini.google.com'))  return 'gemini.google.com';
   if (url.includes('perplexity.ai'))      return 'perplexity.ai';
