@@ -74,7 +74,7 @@
 
   // ─── 메시지 수신 ────────────────────────────────────────────
 
-  chrome.runtime.onMessage.addListener((msg) => {
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'PULSE') {
       tick();
     }
@@ -84,6 +84,10 @@
       netDoneAt = Date.now();
       lastNotifiedAt = Date.now();
       state = 'IDLE';
+    }
+    if (msg.type === 'GET_LATEST_PREVIEW') {
+      const text = detector.getLastResponseText();
+      sendResponse({ preview: text ? text.slice(0, 500) : '' });
     }
   });
 
