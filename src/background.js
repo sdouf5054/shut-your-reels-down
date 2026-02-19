@@ -191,7 +191,26 @@ function saveDiscordError(msg) {
   });
 }
 
-async function sendDiscord(site, tabTitle, timestamp, preview) {
+
+function getPreviewFromTab(tabId) {
+  return new Promise((resolve) => {
+    if (!tabId) {
+      resolve('');
+      return;
+    }
+
+    chrome.tabs.sendMessage(tabId, { type: 'GET_LATEST_PREVIEW' }, (res) => {
+      if (chrome.runtime.lastError) {
+        logDebug(`Discord: preview unavailable from tab ${tabId} (${chrome.runtime.lastError.message})`);
+        resolve('');
+        return;
+      }
+      resolve(typeof res?.preview === 'string' ? res.preview : '');
+    });
+  });
+}
+
+async function sendDiscord(site, tabTitle, timestamp, preview, tabId) {
   const normalizedSite = normalizeSite(site);
 
   const settings = await chrome.storage.sync.get({
@@ -216,16 +235,21 @@ async function sendDiscord(site, tabTitle, timestamp, preview) {
 
   let content = bgMsg('discordCompletionMessage', [siteLabel, tabTitle, time]);
 
+  let previewText = preview || '';
+  if (settings.discordPreview && !previewText) {
+    previewText = await getPreviewFromTab(tabId);
+  }
+
   // 미리보기 추가
-  if (settings.discordPreview && preview) {
-    const trimmed = preview.slice(0, settings.discordPreviewLength).replace(/\n{3,}/g, '\n\n').trim();
+  if (settings.discordPreview && previewText) {
+    const trimmed = previewText.slice(0, settings.discordPreviewLength).replace(/\n{3,}/g, '\n\n').trim();
     if (trimmed) {
       content += `\n>>> ${trimmed}`;
-      if (preview.length > settings.discordPreviewLength) content += '…';
+      if (previewText.length > settings.discordPreviewLength) content += '…';
     }
   }
 
-  const queueKey = `${normalizedSite}|${tabTitle}|${preview ? preview.slice(0, 80) : ''}`;
+  const queueKey = `${normalizedSite}|${tabTitle}|${previewText ? previewText.slice(0, 80) : ''}`;
 
   // 동일 메시지가 큐에 이미 있으면 최신 정보로 덮어씀
   const existing = discordQueue.find((job) => job.queueKey === queueKey);
@@ -344,7 +368,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
       }
       if (tabId) markNotified(tabId);
       playSound(msg.site);
-      sendDiscord(msg.site, msg.tabTitle, msg.timestamp, msg.preview);
+      sendDiscord(msg.site, msg.tabTitle, msg.timestamp, msg.preview, tabId);
       break;
 
     case 'START_HEARTBEAT':
@@ -422,7 +446,7 @@ chrome.webRequest.onCompleted.addListener(
         markNotified(tabId);
         console.log(P, `${site} stream ended (${duration}ms) — playing sound`);
         playSound(site);
-        sendDiscord(site, tab.title, new Date().toISOString(), '');
+        sendDiscord(site, tab.title, new Date().toISOString(), '', tabId);
         chrome.tabs.sendMessage(tabId, { type: 'NETWORK_DONE' }).catch(() => {});
       });
     });
