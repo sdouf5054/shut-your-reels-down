@@ -5,6 +5,24 @@
 
 const P = '[AI-Notifier BG]';
 
+let debugLogs = false;
+
+function logDebug(...args) {
+  if (!debugLogs) return;
+  console.log(P, '[debug]', ...args);
+}
+
+chrome.storage.sync.get({ debugLogs: false }, ({ debugLogs: enabled }) => {
+  debugLogs = Boolean(enabled);
+  console.log(P, `Debug logs ${debugLogs ? 'enabled' : 'disabled'}`);
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'sync' || !changes.debugLogs) return;
+  debugLogs = Boolean(changes.debugLogs.newValue);
+  console.log(P, `Debug logs ${debugLogs ? 'enabled' : 'disabled'}`);
+});
+
 // ─── 사이트별 기본 알림음 ────────────────────────────────────
 
 const DEFAULT_SOUNDS = {
@@ -17,32 +35,56 @@ const DEFAULT_SOUNDS = {
 // ─── 소리 재생 (Offscreen Document) ───────────────────────────
 
 const OFFSCREEN_PATH = 'src/offscreen.html';
+let offscreenInitPromise = null;
 
 async function ensureOffscreen() {
+  if (offscreenInitPromise) {
+    await offscreenInitPromise;
+    return;
+  }
+
   const exists = await chrome.runtime.getContexts({
     contextTypes: ['OFFSCREEN_DOCUMENT'],
     documentUrls: [chrome.runtime.getURL(OFFSCREEN_PATH)]
   });
   if (exists.length > 0) return;
 
-  await chrome.offscreen.createDocument({
+  offscreenInitPromise = chrome.offscreen.createDocument({
     url: OFFSCREEN_PATH,
     reasons: ['AUDIO_PLAYBACK'],
     justification: 'Play notification sound on LLM response completion'
+  }).catch((err) => {
+    // 동시 호출 경쟁으로 이미 생성된 경우는 무해
+    if (!err?.message?.includes('Only a single offscreen document may be created')) {
+      throw err;
+    }
+  }).finally(() => {
+    offscreenInitPromise = null;
   });
+
+  await offscreenInitPromise;
+}
+
+function normalizeSite(site) {
+  if (!site) return site;
+  if (site === 'www.perplexity.ai') return 'perplexity.ai';
+  if (site === 'chat.openai.com') return 'chatgpt.com';
+  return site;
 }
 
 async function playSound(site) {
+  const normalizedSite = normalizeSite(site);
+
   const { volume, sounds } = await chrome.storage.sync.get({
     volume: 0.7,
     sounds: DEFAULT_SOUNDS
   });
 
-  const soundFile = sounds[site] || 'default.wav';
+  const soundFile = sounds[normalizedSite] || 'default.wav';
 
   // "none" → 이 사이트는 알림 꺼짐
   if (soundFile === 'none') {
-    console.log(P, `Sound disabled for ${site}`);
+    console.log(P, `Sound disabled for ${normalizedSite}`);
     return;
   }
 
@@ -68,11 +110,22 @@ const DEFAULT_DISCORD_SITES = {
 const discordQueue = [];
 let discordBusy = false;
 
+const DISCORD_MIN_INTERVAL_MS = 500;
+const DISCORD_MAX_QUEUE = 30;
+const DISCORD_MAX_RETRIES = 5;
+const DISCORD_MAX_BACKOFF_MS = 30000;
+const DISCORD_STALE_WARNING_MS = 120000;
+
 async function processDiscordQueue() {
   if (discordBusy || discordQueue.length === 0) return;
   discordBusy = true;
 
   const job = discordQueue.shift();
+  const queuedMs = Date.now() - (job.queuedAt || Date.now());
+  logDebug(`Discord: dequeued ${job.siteLabel} (wait ${queuedMs}ms, remaining ${discordQueue.length})`);
+  if (queuedMs > DISCORD_STALE_WARNING_MS) {
+    console.log(P, `Discord: stale job warning (${queuedMs}ms, site: ${job.siteLabel})`);
+  }
 
   try {
     const res = await fetch(job.url, {
@@ -83,29 +136,40 @@ async function processDiscordQueue() {
 
     if (res.status === 429) {
       const data = await res.json().catch(() => ({}));
-      const waitMs = Math.ceil((data.retry_after || 2) * 1000);
-      console.log(P, `Discord: rate limited, waiting ${waitMs}ms (queue: ${discordQueue.length + 1})`);
-      discordQueue.unshift(job); // 다시 맨 앞에
-      discordBusy = false;
-      setTimeout(processDiscordQueue, waitMs);
-      return;
-    }
+      job.retries = (job.retries || 0) + 1;
 
-    if (!res.ok) {
+      if (job.retries > DISCORD_MAX_RETRIES) {
+        const errMsg = `rate limit retries exceeded (${job.siteLabel})`;
+        console.log(P, `Discord: ${errMsg}`);
+        saveDiscordError(errMsg);
+      } else {
+        const retryAfterMs = Math.ceil((data.retry_after || 0) * 1000);
+        const backoffMs = Math.min(DISCORD_MAX_BACKOFF_MS, DISCORD_MIN_INTERVAL_MS * (2 ** job.retries));
+        const waitMs = Math.max(retryAfterMs, backoffMs);
+        console.log(P, `Discord: rate limited, waiting ${waitMs}ms (queue: ${discordQueue.length + 1}, retries: ${job.retries}, site: ${job.siteLabel})`);
+        discordQueue.unshift(job); // 다시 맨 앞에
+        discordBusy = false;
+        setTimeout(processDiscordQueue, waitMs);
+        return;
+      }
+    } else if (!res.ok) {
       const errMsg = `HTTP ${res.status}`;
       console.log(P, `Discord: ${errMsg}`);
       saveDiscordError(errMsg);
     } else {
       console.log(P, `Discord: sent (${job.siteLabel})`);
+      logDebug(`Discord: delivered ${job.siteLabel} (retries: ${job.retries || 0})`);
     }
   } catch (err) {
     console.log(P, 'Discord: fetch error', err.message);
+    logDebug(`Discord: fetch error detail (site: ${job.siteLabel}, retries: ${job.retries || 0})`);
     saveDiscordError(err.message);
   }
 
   discordBusy = false;
   if (discordQueue.length > 0) {
-    setTimeout(processDiscordQueue, 500); // 최소 0.5초 간격
+    logDebug(`Discord: scheduling next job (queue: ${discordQueue.length})`);
+    setTimeout(processDiscordQueue, DISCORD_MIN_INTERVAL_MS);
   }
 }
 
@@ -119,6 +183,8 @@ function saveDiscordError(msg) {
 }
 
 async function sendDiscord(site, tabTitle, timestamp, preview) {
+  const normalizedSite = normalizeSite(site);
+
   const settings = await chrome.storage.sync.get({
     discordWebhookUrl: '',
     discordEnabled: false,
@@ -131,12 +197,12 @@ async function sendDiscord(site, tabTitle, timestamp, preview) {
   if (!settings.discordWebhookUrl.startsWith('https://discord.com/api/webhooks/')) return;
 
   // 사이트별 ON/OFF
-  if (settings.discordSites[site] === false) {
-    console.log(P, `Discord: disabled for ${site}`);
+  if (settings.discordSites[normalizedSite] === false) {
+    console.log(P, `Discord: disabled for ${normalizedSite}`);
     return;
   }
 
-  const siteLabel = SITE_LABELS[site] || site;
+  const siteLabel = SITE_LABELS[normalizedSite] || normalizedSite;
   const time = new Date(timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
 
   let content = `✅ **${siteLabel}** 답변 완료 — ${tabTitle} (${time})`;
@@ -150,13 +216,35 @@ async function sendDiscord(site, tabTitle, timestamp, preview) {
     }
   }
 
+  const queueKey = `${normalizedSite}|${tabTitle}|${preview ? preview.slice(0, 80) : ''}`;
+
+  // 동일 메시지가 큐에 이미 있으면 최신 정보로 덮어씀
+  const existing = discordQueue.find((job) => job.queueKey === queueKey);
+  if (existing) {
+    existing.queuedAt = Date.now();
+    existing.payload = { username: 'shut your reels down', content };
+    logDebug(`Discord: coalesced ${siteLabel} (queue: ${discordQueue.length})`);
+    return;
+  }
+
+  if (discordQueue.length >= DISCORD_MAX_QUEUE) {
+    const dropped = discordQueue.shift();
+    const dropMsg = `Discord queue full (${DISCORD_MAX_QUEUE}) — dropped oldest (${dropped?.siteLabel || 'unknown'})`;
+    console.log(P, dropMsg);
+    saveDiscordError(dropMsg);
+  }
+
   // 큐에 추가
   discordQueue.push({
     url: settings.discordWebhookUrl,
     siteLabel,
+    queueKey,
+    queuedAt: Date.now(),
+    retries: 0,
     payload: { username: 'shut your reels down', content }
   });
 
+  logDebug(`Discord: enqueued ${siteLabel} (queue: ${discordQueue.length})`);
   processDiscordQueue();
 }
 
@@ -239,6 +327,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     }
 
     case 'ANSWER_DONE':
+      msg.site = normalizeSite(msg.site);
       console.log(P, 'Answer done:', msg.site, `(tab ${tabId})`);
       if (tabId && !canNotify(tabId)) {
         console.log(P, 'Skipped — tab cooldown active');
@@ -261,22 +350,27 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 
 // ─── 네트워크 기반 스트리밍 완료 감지 ─────────────────────────
 
-const STREAM_URL_PATTERNS = [
-  'https://chatgpt.com/backend-api/f/conversation',
-  'https://claude.ai/api/*/completion',
-  'https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate*',
-  'https://gemini.google.com/u/*/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate*',
-  'https://www.perplexity.ai/rest/sse/perplexity_ask*'
+const STREAM_RULES = [
+  { site: 'chatgpt.com', pattern: 'https://chatgpt.com/backend-api/f/conversation' },
+  { site: 'chatgpt.com', pattern: 'https://chatgpt.com/backend-api/*/conversation' },
+  { site: 'chat.openai.com', pattern: 'https://chat.openai.com/backend-api/f/conversation' },
+  { site: 'chat.openai.com', pattern: 'https://chat.openai.com/backend-api/*/conversation' },
+  { site: 'claude.ai', pattern: 'https://claude.ai/api/*/completion' },
+  { site: 'gemini.google.com', pattern: 'https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate*' },
+  { site: 'gemini.google.com', pattern: 'https://gemini.google.com/u/*/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate*' },
+  { site: 'perplexity.ai', pattern: 'https://www.perplexity.ai/rest/sse/perplexity_ask*' },
+  { site: 'perplexity.ai', pattern: 'https://perplexity.ai/rest/sse/perplexity_ask*' }
 ];
+
+const STREAM_URL_PATTERNS = [...new Set(STREAM_RULES.map((rule) => rule.pattern))];
 
 const MIN_STREAM_DURATION_MS = 1000;
 const pendingStreams = new Map();
 
 function siteFromUrl(url) {
-  if (url.includes('chatgpt.com'))        return 'chatgpt.com';
-  if (url.includes('claude.ai'))          return 'claude.ai';
-  if (url.includes('gemini.google.com'))  return 'gemini.google.com';
-  if (url.includes('perplexity.ai'))      return 'perplexity.ai';
+  for (const rule of STREAM_RULES) {
+    if (url.includes(rule.site)) return normalizeSite(rule.site);
+  }
   return null;
 }
 
@@ -284,7 +378,9 @@ chrome.webRequest.onBeforeRequest.addListener(
   ({ tabId, url, requestId }) => {
     if (tabId < 0) return;
     const site = siteFromUrl(url);
+    if (!site) return;
     pendingStreams.set(requestId, { tabId, startTime: Date.now(), site });
+    logDebug(`${site} stream matched URL: ${url}`);
     console.log(P, `${site} stream started (tab ${tabId}, req ${requestId})`);
   },
   { urls: STREAM_URL_PATTERNS }
