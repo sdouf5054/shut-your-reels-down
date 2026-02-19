@@ -142,6 +142,7 @@ const $discordPreview       = document.getElementById('discordPreview');
 const $discordPreviewLength = document.getElementById('discordPreviewLength');
 const $discordErrors        = document.getElementById('discordErrors');
 const $discordClearErrors   = document.getElementById('discordClearErrors');
+const $debugLogs            = document.getElementById('debugLogs');
 
 // ── 로드 ──
 
@@ -150,12 +151,14 @@ chrome.storage.sync.get({
   discordWebhookUrl: '',
   discordSites: DEFAULT_DISCORD_SITES,
   discordPreview: true,
-  discordPreviewLength: 200
+  discordPreviewLength: 200,
+  debugLogs: false
 }, (s) => {
   $discordEnabled.checked = s.discordEnabled;
   $discordUrl.value = s.discordWebhookUrl;
   $discordPreview.checked = s.discordPreview;
   $discordPreviewLength.value = s.discordPreviewLength;
+  $debugLogs.checked = Boolean(s.debugLogs);
   buildDiscordSiteRows(s.discordSites);
 });
 
@@ -214,6 +217,12 @@ $discordPreviewLength.addEventListener('change', () => {
   const val = Math.max(50, Math.min(500, parseInt($discordPreviewLength.value) || 200));
   $discordPreviewLength.value = val;
   chrome.storage.sync.set({ discordPreviewLength: val });
+});
+
+
+$debugLogs.addEventListener('change', () => {
+  chrome.storage.sync.set({ debugLogs: $debugLogs.checked });
+  showDiscordStatus($debugLogs.checked ? '디버그 로그 활성화됨' : '디버그 로그 비활성화됨', false);
 });
 
 // ── 테스트 전송 ──

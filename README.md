@@ -85,6 +85,29 @@ The extension sends a message to a Discord channel via **Webhook**, and Discord 
 - **Duplicate sounds?**
   - This can happen when a platform triggers both DOM and network signals; the extension includes cooldown/suppression, but selectors may need updates after platform UI changes.
 
+## Test Result Interpretation
+
+When reviewing automated checks, use this quick guide:
+
+- ✅ **`node --check ...` passed**
+  - Good sign. JavaScript files are syntactically valid.
+  - This does **not** guarantee runtime behavior in Chrome, but it confirms there are no parse errors.
+
+- ✅ **`manifest.json` parse test passed**
+  - Good sign. The JSON structure is valid.
+  - This does **not** validate Chrome permission semantics, only JSON format.
+
+- ⚠️ **Playwright/browser-container `ERR_FILE_NOT_FOUND` for `file:///.../options.html`**
+  - Usually an environment limitation, **not** necessarily a code bug.
+  - It means the browser runner could not access your local repository path directly.
+
+### Recommended fallback verification
+
+1. Reload extension in `chrome://extensions`.
+2. Open Options page from the extension card.
+3. Toggle settings (including debug logs), click save/test actions.
+4. Confirm behavior in service worker console (`chrome://extensions` → service worker inspect).
+
 ## TODO
 - [ ] Language support (especially English)
 - [ ] Support notifications for other app integrations (image generation, music/playlist creation & linking)
@@ -92,4 +115,3 @@ The extension sends a message to a Discord channel via **Webhook**, and Discord 
 
 ## License
 MIT
-
