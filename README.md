@@ -10,10 +10,10 @@ A lightweight browser extension that **plays a sound when an LLM finishes genera
 
 ## Supported Platforms
 
-**ChatGPT**  
+**ChatGPT**
 DOM detection works even in background tabs
 
-**Claude, Gemini, Perplexity**  
+**Claude, Gemini, Perplexity**
 Uses network detection when backgrounded
 
 > This extension uses a **hybrid strategy (DOM + network)** because some sites stop rendering / throttle timers in hidden tabs.
@@ -24,7 +24,7 @@ Uses network detection when backgrounded
 - **Sound notification on completion** (per tab, per platform)
 - **Multi-platform support**: ChatGPT, Claude, Gemini, Perplexity
 - **Multi-tab aware**: detects multiple completions independently
-- **Duplicate prevention**: cooldown + suppression window to avoid double pings
+- **Duplicate prevention**: `networkHandled` flag + cooldown to avoid double pings
 - **Options page**:
   - Volume control
   - Per-platform sound selection (or disable)
@@ -44,7 +44,7 @@ Uses network detection when backgrounded
 ## Usage
 1. Go to one of the supported platforms.
 2. Send a prompt.
-3. When the response finishes generating, you’ll hear a sound.
+3. When the response finishes generating, you'll hear a sound.
 
 ## Discord Push Notifications (Optional)
 
@@ -69,9 +69,43 @@ The extension sends a message to a Discord channel via **Webhook**, and Discord 
 - On iPhone: Settings → Notifications → Discord → Allow Notifications.
 
 
+## Architecture
+
+```
+constants.js          ← shared constants (sites, sounds, defaults)
+background.js         ← service worker: sound playback, heartbeat, network detection, Discord
+content/
+  detectors/
+    chatgpt.js        ← per-site DOM selectors
+    claude.js
+    gemini.js
+    perplexity.js
+  engine.js           ← shared detection state machine (IDLE → GENERATING → SETTLING → DONE)
+offscreen.html/.js    ← audio playback via offscreen document
+options.html/.js      ← settings UI
+```
+
+### Detection Flow
+
+```
+           ┌─────────────────────────────────┐
+  Active   │  MutationObserver + setInterval  │──→ engine.js tick()
+   tab     │  (rAF-throttled)                 │      │
+           └─────────────────────────────────┘      ▼
+                                                  ANSWER_DONE
+           ┌─────────────────────────────────┐      │
+  Hidden   │  webRequest.onCompleted          │──→ sound + Discord
+   tab     │  (background service worker)     │      │
+           └─────────────────────────────────┘      ▼
+                                                  NETWORK_DONE → engine suppression
+```
+
+When the network path fires first, it sets `networkHandled = true` in the content script, preventing the DOM path from sending a duplicate notification when the tab becomes visible again.
+
+
 ## Privacy
 - The extension runs locally in your browser.
-- If Discord integration is enabled, it sends **minimal metadata** by default (e.g., platform name, tab title, timestamp).
+- If Discord integration is enabled, it sends **minimal metadata** (platform name, tab title, timestamp).
 
 ## Troubleshooting
 - **No sound?**
@@ -80,10 +114,10 @@ The extension sends a message to a Discord channel via **Webhook**, and Discord 
   - Some OS/browsers may block audio until you interact once—try clicking on the page and testing again.
 - **Discord push not arriving?**
   - Verify webhook URL using **Send test notification**.
-  - Ensure the channel/server isn’t muted and notifications are set to All Messages.
+  - Ensure the channel/server isn't muted and notifications are set to All Messages.
   - Check iPhone Focus / Do Not Disturb settings.
 - **Duplicate sounds?**
-  - This can happen when a platform triggers both DOM and network signals; the extension includes cooldown/suppression, but selectors may need updates after platform UI changes.
+  - This should be handled automatically by the `networkHandled` flag and tab cooldown. If it still occurs, enable debug logs in Options and check the service worker console.
 
 ## Test Result Interpretation
 
@@ -109,7 +143,6 @@ When reviewing automated checks, use this quick guide:
 4. Confirm behavior in service worker console (`chrome://extensions` → service worker inspect).
 
 ## TODO
-- [ ] Language support (especially English)
 - [ ] Support notifications for other app integrations (image generation, music/playlist creation & linking)
 - [ ] Publish to Chrome Web Store
 
